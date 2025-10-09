@@ -158,7 +158,7 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
     
     let completed = false
     let attempts = 0
-    const maxAttempts = 60
+    const maxAttempts = 600
 
     while (!completed && attempts < maxAttempts) {
       console.log(`[POLLING] ⏳ Attempt ${attempts + 1}/${maxAttempts} - Waiting 5 seconds before status check...`)
