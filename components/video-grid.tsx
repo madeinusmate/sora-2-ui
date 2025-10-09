@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Video } from "@/types/video"
 import { formatDistanceToNow } from "date-fns"
-import { Loader2, AlertCircle, CheckCircle2, Clock, Copy, Trash2, Shuffle, Sparkles, Search, Filter, X } from "lucide-react"
+import { Loader2, AlertCircle, CheckCircle2, Clock, Copy, Trash2, Shuffle, Sparkles, Search, Filter, X, RefreshCw } from "lucide-react"
 import { useVideoProgress } from "@/hooks/use-video-progress"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
@@ -25,6 +25,7 @@ interface VideoGridProps {
 export function VideoGrid({ videos, isLoading, onVideoUpdate, onPromptReuse, onVideoDelete, onVideoRemix }: VideoGridProps) {
   const { getVideoProgress } = useVideoProgress(videos, onVideoUpdate)
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
+  const [checkingStatusVideoId, setCheckingStatusVideoId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState<string>("")
   const [creationTypeFilter, setCreationTypeFilter] = useState<string>("all")
   const [modelFilter, setModelFilter] = useState<string>("all")
@@ -92,6 +93,46 @@ export function VideoGrid({ videos, isLoading, onVideoUpdate, onPromptReuse, onV
       // You could add a toast notification here for better UX
     } finally {
       setDeletingVideoId(null)
+    }
+  }
+
+  const handleCheckVideoStatus = async (videoId: string) => {
+    setCheckingStatusVideoId(videoId)
+
+    try {
+      console.log(`[UI] Checking status for video: ${videoId}`)
+      const response = await fetch(`/api/check-video-status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ videoId }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to check video status")
+      }
+
+      const data = await response.json()
+      console.log(`[UI] Status check result:`, data)
+
+      if (data.success) {
+        // If the video was completed or failed, we need to refresh the video data
+        // The onVideoUpdate callback should handle this
+        const updatedVideo = videos.find(v => v.id === videoId)
+        if (updatedVideo) {
+          // Trigger a refresh by calling onVideoUpdate with the current video
+          // This will cause the parent to refetch the video data
+          onVideoUpdate(updatedVideo)
+        }
+      }
+
+    } catch (error) {
+      console.error("[UI] Error checking video status:", error)
+      // You could add a toast notification here for better UX
+    } finally {
+      setCheckingStatusVideoId(null)
     }
   }
 
@@ -377,6 +418,29 @@ export function VideoGrid({ videos, isLoading, onVideoUpdate, onPromptReuse, onV
 
                   </div>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {currentStatus === "in_progress" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleCheckVideoStatus(video.id)}
+                        className="h-8 w-8 p-0 hover:bg-green-100"
+                        title="Check video status"
+                        disabled={checkingStatusVideoId === video.id}
+                      >
+                        <Tooltip>
+                          <TooltipTrigger>
+                            {checkingStatusVideoId === video.id ? (
+                              <Loader2 className="h-3 w-3 text-green-600 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3 w-3 text-green-600" />
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {checkingStatusVideoId === video.id ? "Checking status..." : "Check video status"}
+                          </TooltipContent>
+                        </Tooltip>
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"

@@ -4,7 +4,7 @@ import { NextResponse } from "next/server"
 export async function POST(request: Request) {
   try {
     console.log("[VIDEO-GEN] 🚀 Starting video generation request")
-    
+     
     const contentType = request.headers.get("content-type") || ""
     let prompt: string
     let model = "sora-2"
@@ -158,7 +158,7 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
     
     let completed = false
     let attempts = 0
-    const maxAttempts = 600
+    const maxAttempts = 150
 
     while (!completed && attempts < maxAttempts) {
       console.log(`[POLLING] ⏳ Attempt ${attempts + 1}/${maxAttempts} - Waiting 5 seconds before status check...`)
