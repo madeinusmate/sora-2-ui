@@ -40,8 +40,8 @@ export function AppHeader({ onVideoFetched }: AppHeaderProps) {
             <Dialog>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm">
-                  <Download className="mr-2 h-4 w-4" />
-                  Fetch Video
+                  <Download className="h-4 w-4" />
+                  
                 </Button>
               </DialogTrigger>
               <DialogContent>
@@ -54,8 +54,8 @@ export function AppHeader({ onVideoFetched }: AppHeaderProps) {
             </Dialog>
             {authEnabled && user && (
               <Button variant="outline" size="sm" onClick={handleSignOut}>
-                <LogOut className="mr-2 h-4 w-4" />
-                Sign Out
+                <LogOut className="h-4 w-4" />
+                
               </Button>
             )}
           </div>

@@ -212,7 +212,7 @@ export function VideoGrid({ videos, isLoading, onVideoUpdate, onPromptReuse, onV
 
   return (
     <div className="space-y-4">
-      <div className="flex">
+      <div className="flex flex-wrap gap-4 items-center">
         <div className="relative w-full">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <Input
@@ -223,7 +223,7 @@ export function VideoGrid({ videos, isLoading, onVideoUpdate, onPromptReuse, onV
           />
 
         </div>
-        <div className="flex flex-row gap-4 items-center justify-end w-full">
+        <div className="flex flex-row gap-4 items-center justify-start w-full">
           
 
           <Select value={creationTypeFilter} onValueChange={setCreationTypeFilter}>

@@ -28,7 +28,7 @@ export function VideoGenerator({ onVideoGenerated, externalPrompt, remixMode, on
 
   const [selectedModel, setSelectedModel] = useState("sora-2")
   const [duration, setDuration] = useState("12")
-  const [size, setSize] = useState("1280x720")
+  const [size, setSize] = useState("720x1280")
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -218,7 +218,55 @@ export function VideoGenerator({ onVideoGenerated, externalPrompt, remixMode, on
 
 
             {!remixMode?.isActive && (
-              <div className="flex flex-row gap-3 ">
+              <div className="flex flex-row flex-wrap gap-3 ">
+
+<div className="flex items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,video/*"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleUploadClick}
+                        disabled={isGenerating}
+                        className="flex items-center gap-2"
+                      >
+                        <Upload className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {selectedFile ? "Change File" : "Add image or video reference that guides generation. The referece file must be of the same size as the video you are generating."}
+                    </TooltipContent>
+                  </Tooltip>
+
+
+                  {selectedFile && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      {selectedFile.type.startsWith('image/') ? (
+                        <FileImage className="h-4 w-4" />
+                      ) : (
+                        <FileVideo className="h-4 w-4" />
+                      )}
+                      <span className="truncate max-w-[200px]">{selectedFile.name}</span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleRemoveFile}
+                        className="h-6 w-6 p-0"
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                {fileError && <p className="text-sm text-destructive">{fileError}</p>}
 
                 <div className="space-y-2">
 
@@ -270,53 +318,7 @@ export function VideoGenerator({ onVideoGenerated, externalPrompt, remixMode, on
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*,video/*"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleUploadClick}
-                        disabled={isGenerating}
-                        className="flex items-center gap-2"
-                      >
-                        <Upload className="h-4 w-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {selectedFile ? "Change File" : "Add image or video reference that guides generation. The referece file must be of the same size as the video you are generating."}
-                    </TooltipContent>
-                  </Tooltip>
-
-
-                  {selectedFile && (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      {selectedFile.type.startsWith('image/') ? (
-                        <FileImage className="h-4 w-4" />
-                      ) : (
-                        <FileVideo className="h-4 w-4" />
-                      )}
-                      <span className="truncate max-w-[200px]">{selectedFile.name}</span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleRemoveFile}
-                        className="h-6 w-6 p-0"
-                      >
-                        <X className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-                {fileError && <p className="text-sm text-destructive">{fileError}</p>}
+               
               </div>
             )}
             <Button onClick={handleGenerate} disabled={isGenerating || !prompt.trim()} className="w-full" size="lg">
