@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
+import { getProviderConfig, getCurrentProvider } from "@/lib/provider-config"
 
 export async function POST(request: Request) {
   try {
@@ -16,11 +17,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ video: existingVideo, message: "Video already exists in database" })
     }
 
-    const metadataResponse = await fetch(`https://api.openai.com/v1/videos/${videoId}`, {
+    const providerConfig = getProviderConfig()
+    const metadataResponse = await fetch(providerConfig.statusUrl(videoId), {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
+      headers: providerConfig.headers,
     })
 
     if (!metadataResponse.ok) {
@@ -39,11 +39,9 @@ export async function POST(request: Request) {
 
     const modelUsed = metadata.model || null
 
-    const contentResponse = await fetch(`https://api.openai.com/v1/videos/${videoId}/content`, {
+    const contentResponse = await fetch(providerConfig.contentUrl(videoId), {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
+      headers: providerConfig.headers,
     })
 
     if (!contentResponse.ok) {

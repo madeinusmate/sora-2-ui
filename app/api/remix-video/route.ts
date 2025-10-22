@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
+import { getProviderConfig, getCurrentProvider, formatRequestForProvider } from "@/lib/provider-config"
 
 export async function POST(request: Request) {
   try {
@@ -26,7 +27,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Input video ID is required for remix" }, { status: 400 })
     }
 
-    console.log("[REMIX-VIDEO] 🌐 Sending remix request to OpenAI API...")
+    console.log(`[REMIX-VIDEO] 🌐 Sending remix request to ${getCurrentProvider().toUpperCase()} API...`)
+    const providerConfig = getProviderConfig()
+    
+    // Note: Azure might not support remix functionality, so we'll need to handle this
+    if (getCurrentProvider() === "azure") {
+      console.log("[REMIX-VIDEO] ⚠️ Azure provider may not support remix functionality")
+      return NextResponse.json({ 
+        error: "Remix functionality is not supported with Azure provider" 
+      }, { status: 400 })
+    }
+    
     const response = await fetch(`https://api.openai.com/v1/videos/${input_video_id}/remix`, {
       method: "POST",
       headers: {
@@ -38,11 +49,11 @@ export async function POST(request: Request) {
       }),
     })
 
-    console.log("[REMIX-VIDEO] 📡 OpenAI API response status:", response.status)
+    console.log(`[REMIX-VIDEO] 📡 ${getCurrentProvider().toUpperCase()} API response status:`, response.status)
 
     if (!response.ok) {
       const error = await response.json()
-      console.error("[REMIX-VIDEO] ❌ OpenAI API error:", {
+      console.error(`[REMIX-VIDEO] ❌ ${getCurrentProvider().toUpperCase()} API error:`, {
         status: response.status,
         error: error.error?.message || "Unknown error"
       })
@@ -107,8 +118,9 @@ export async function POST(request: Request) {
 // Reuse the polling function from generate-video
 async function pollAndUpdateVideo(jobId: string, recordId: string, model: string) {
   try {
-    console.log("[REMIX-POLLING] 🔄 Starting polling for remix video job:", { jobId, recordId, model })
+    console.log("[REMIX-POLLING] 🔄 Starting polling for remix video job:", { jobId, recordId, model, provider: getCurrentProvider() })
     
+    const providerConfig = getProviderConfig()
     let completed = false
     let attempts = 0
     const maxAttempts = 60
@@ -118,11 +130,9 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
       await new Promise((resolve) => setTimeout(resolve, 5000))
 
       console.log(`[REMIX-POLLING] 📡 Checking status for remix job: ${jobId}`)
-      const statusResponse = await fetch(`https://api.openai.com/v1/videos/${jobId}`, {
+      const statusResponse = await fetch(providerConfig.statusUrl(jobId), {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
+        headers: providerConfig.headers,
       })
 
       console.log(`[REMIX-POLLING] 📊 Status check response: ${statusResponse.status}`)
@@ -203,11 +213,9 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
 
     // Download video content
     console.log(`[REMIX-DOWNLOAD] 📥 Starting video download for remix job: ${jobId}`)
-    const contentResponse = await fetch(`https://api.openai.com/v1/videos/${jobId}/content`, {
+    const contentResponse = await fetch(providerConfig.contentUrl(jobId), {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
+      headers: providerConfig.headers,
     })
 
     console.log(`[REMIX-DOWNLOAD] 📊 Video download response status: ${contentResponse.status}`)

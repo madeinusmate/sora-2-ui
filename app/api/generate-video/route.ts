@@ -1,5 +1,6 @@
-import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
+import { getProviderConfig, getCurrentProvider, formatRequestForProvider } from "@/lib/provider-config"
+import { insertVideo, updateVideoStatus } from "@/lib/database-utils"
 
 export async function POST(request: Request) {
   try {
@@ -52,52 +53,42 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 })
     }
 
-    console.log("[VIDEO-GEN] 🌐 Sending request to OpenAI API...")
+    console.log(`[VIDEO-GEN] 🌐 Sending request to ${getCurrentProvider().toUpperCase()} API...`)
     
-    let requestBody: any
-    let headers: Record<string, string> = {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-    }
+    const providerConfig = getProviderConfig()
+    const requestBody = formatRequestForProvider(prompt, model, seconds, size, inputReference)
+    let headers = { ...providerConfig.headers }
 
-    if (inputReference) {
-      // Send as FormData when input reference is provided
-      console.log("[VIDEO-GEN] 📎 Including input reference in OpenAI request")
-      const formData = new FormData()
-      formData.append("model", model)
-      formData.append("prompt", prompt)
-      formData.append("seconds", seconds)
-      formData.append("size", size)
-      formData.append("input_reference", inputReference)
-      
-      requestBody = formData
-      // Don't set Content-Type header for FormData - let fetch set it with boundary
-    } else {
-      // Send as JSON when no input reference
+    // Handle Content-Type for different providers and request types
+    if (getCurrentProvider() === "azure") {
+      // Azure always uses JSON
       headers["Content-Type"] = "application/json"
-      requestBody = JSON.stringify({
-        model: model,
-        prompt: prompt,
-        seconds: seconds,
-        size: size,
-      })
+    } else {
+      // OpenAI: FormData for file uploads, JSON otherwise
+      if (inputReference) {
+        // Don't set Content-Type for FormData - let fetch set it with boundary
+        delete headers["Content-Type"]
+      } else {
+        headers["Content-Type"] = "application/json"
+      }
     }
 
-    const response = await fetch("https://api.openai.com/v1/videos", {
+    const response = await fetch(providerConfig.generateUrl, {
       method: "POST",
       headers,
-      body: requestBody,
+      body: getCurrentProvider() === "azure" ? JSON.stringify(requestBody) : (requestBody instanceof FormData ? requestBody : JSON.stringify(requestBody)),
     })
 
-    console.log("[VIDEO-GEN] 📡 OpenAI API response status:", response.status)
+    console.log(`[VIDEO-GEN] 📡 ${getCurrentProvider().toUpperCase()} API response status:`, response.status)
 
     if (!response.ok) {
       const error = await response.json()
-      console.error("[VIDEO-GEN] ❌ OpenAI API error:", {
+      console.error(`[VIDEO-GEN] ❌ ${getCurrentProvider().toUpperCase()} API error:`, {
         status: response.status,
-        error: error.error?.message || "Unknown error"
+        error: error.error?.message || error.message || "Unknown error"
       })
       return NextResponse.json(
-        { error: `Failed to generate video: ${error.error?.message || "Unknown error"}` },
+        { error: `Failed to generate video: ${error.error?.message || error.message || "Unknown error"}` },
         { status: response.status },
       )
     }
@@ -105,7 +96,7 @@ export async function POST(request: Request) {
     const data = await response.json()
     const jobId = data.id
 
-    console.log("[VIDEO-GEN] ✅ Video generation job created:", {
+    console.log(`[VIDEO-GEN] ✅ Video generation job created:`, {
       jobId,
       status: data.status || "unknown"
     })
@@ -116,25 +107,15 @@ export async function POST(request: Request) {
     }
 
     console.log("[VIDEO-GEN] 💾 Saving video record to database...")
-    const supabase = await createClient()
-    const { data: videoRecord, error: dbError } = await supabase
-      .from("videos")
-      .insert({
-        prompt,
-        video_url: "", // Empty initially
-        video_id: jobId,
-        model: model,
-        status: "in_progress",
-        error_message: "", // Empty initially
-        creation_type: "standard",
-      })
-      .select()
-      .single()
-
-    if (dbError) {
-      console.error("[VIDEO-GEN] ❌ Database error:", dbError)
-      return NextResponse.json({ error: "Failed to save video" }, { status: 500 })
-    }
+    const videoRecord = await insertVideo({
+      prompt,
+      video_url: "", // Empty initially
+      video_id: jobId,
+      model: model,
+      status: "in_progress",
+      error_message: "", // Empty initially
+      creation_type: "standard",
+    })
 
     console.log("[VIDEO-GEN] ✅ Video record saved:", {
       recordId: videoRecord.id,
@@ -148,14 +129,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ video: videoRecord })
   } catch (error) {
     console.error("[VIDEO-GEN] ❌ Unexpected error generating video:", error)
+    
+    // Handle specific error types
+    if (error instanceof Error) {
+      if (error.name === 'DatabaseTimeoutError') {
+        return NextResponse.json({ error: "Database timeout - please try again" }, { status: 504 })
+      }
+      if (error.name === 'DatabaseConnectionError') {
+        return NextResponse.json({ error: "Database connection failed - please try again" }, { status: 503 })
+      }
+    }
+    
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }
 }
 
 async function pollAndUpdateVideo(jobId: string, recordId: string, model: string) {
   try {
-    console.log("[POLLING] 🔄 Starting polling for video job:", { jobId, recordId, model })
+    console.log(`[POLLING] 🔄 Starting polling for video job:`, { jobId, recordId, model, provider: getCurrentProvider() })
     
+    const providerConfig = getProviderConfig()
     let completed = false
     let attempts = 0
     const maxAttempts = 150
@@ -165,11 +158,9 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
       await new Promise((resolve) => setTimeout(resolve, 5000))
 
       console.log(`[POLLING] 📡 Checking status for job: ${jobId}`)
-      const statusResponse = await fetch(`https://api.openai.com/v1/videos/${jobId}`, {
+      const statusResponse = await fetch(providerConfig.statusUrl(jobId), {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
+        headers: providerConfig.headers,
       })
 
       console.log(`[POLLING] 📊 Status check response: ${statusResponse.status}`)
@@ -209,19 +200,14 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
         
         // Update status to failed with error message
         console.log(`[POLLING] 💾 Updating database status to 'failed' with error message for record: ${recordId}`)
-        const supabase = await createClient()
-        const { error: updateError } = await supabase
-          .from("videos")
-          .update({ 
+        try {
+          await updateVideoStatus(recordId, { 
             status: "failed",
             error_message: errorMessage
           })
-          .eq("id", recordId)
-        
-        if (updateError) {
-          console.error(`[POLLING] ❌ Failed to update database status to 'failed':`, updateError)
-        } else {
           console.log(`[POLLING] ✅ Successfully updated database status to 'failed' with error: ${errorMessage}`)
+        } catch (updateError) {
+          console.error(`[POLLING] ❌ Failed to update database status to 'failed':`, updateError)
         }
         return
       }
@@ -234,27 +220,20 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
       
       // Timeout - mark as failed
       console.log(`[POLLING] 💾 Updating database status to 'failed' due to timeout for record: ${recordId}`)
-      const supabase = await createClient()
-      const { error: timeoutError } = await supabase
-        .from("videos")
-        .update({ status: "failed" })
-        .eq("id", recordId)
-      
-      if (timeoutError) {
-        console.error(`[POLLING] ❌ Failed to update database status after timeout:`, timeoutError)
-      } else {
+      try {
+        await updateVideoStatus(recordId, { status: "failed" })
         console.log(`[POLLING] ✅ Successfully updated database status to 'failed' after timeout`)
+      } catch (timeoutError) {
+        console.error(`[POLLING] ❌ Failed to update database status after timeout:`, timeoutError)
       }
       return
     }
 
     // Download video content
     console.log(`[DOWNLOAD] 📥 Starting video download for job: ${jobId}`)
-    const contentResponse = await fetch(`https://api.openai.com/v1/videos/${jobId}/content`, {
+    const contentResponse = await fetch(providerConfig.contentUrl(jobId), {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
+      headers: providerConfig.headers,
     })
 
     console.log(`[DOWNLOAD] 📊 Video download response status: ${contentResponse.status}`)
@@ -266,16 +245,11 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
       })
       
       console.log(`[DOWNLOAD] 💾 Updating database status to 'failed' due to download failure for record: ${recordId}`)
-      const supabase = await createClient()
-      const { error: downloadError } = await supabase
-        .from("videos")
-        .update({ status: "failed" })
-        .eq("id", recordId)
-      
-      if (downloadError) {
-        console.error(`[DOWNLOAD] ❌ Failed to update database status after download failure:`, downloadError)
-      } else {
+      try {
+        await updateVideoStatus(recordId, { status: "failed" })
         console.log(`[DOWNLOAD] ✅ Successfully updated database status to 'failed' after download failure`)
+      } catch (downloadError) {
+        console.error(`[DOWNLOAD] ❌ Failed to update database status after download failure:`, downloadError)
       }
       return
     }
@@ -295,19 +269,14 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
 
     // Update database with completed video
     console.log(`[DOWNLOAD] 💾 Updating database with completed video for record: ${recordId}`)
-    const supabase = await createClient()
-    const { error: finalUpdateError } = await supabase
-      .from("videos")
-      .update({ 
+    try {
+      await updateVideoStatus(recordId, { 
         video_url: videoDataUrl, 
         status: "completed" 
       })
-      .eq("id", recordId)
-    
-    if (finalUpdateError) {
-      console.error(`[DOWNLOAD] ❌ Failed to update database with completed video:`, finalUpdateError)
-    } else {
       console.log(`[DOWNLOAD] 🎉 Successfully updated database - video is now ready! Record: ${recordId}, Job: ${jobId}`)
+    } catch (finalUpdateError) {
+      console.error(`[DOWNLOAD] ❌ Failed to update database with completed video:`, finalUpdateError)
     }
   } catch (error) {
     console.error("[POLLING] ❌ Unexpected error in background polling:", {
@@ -320,17 +289,8 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
     // Mark as failed on error
     console.log(`[POLLING] 💾 Attempting to mark video as failed due to unexpected error...`)
     try {
-      const supabase = await createClient()
-      const { error: errorUpdateError } = await supabase
-        .from("videos")
-        .update({ status: "failed" })
-        .eq("id", recordId)
-      
-      if (errorUpdateError) {
-        console.error(`[POLLING] ❌ Failed to update status to failed after error:`, errorUpdateError)
-      } else {
-        console.log(`[POLLING] ✅ Successfully marked video as failed after error`)
-      }
+      await updateVideoStatus(recordId, { status: "failed" })
+      console.log(`[POLLING] ✅ Successfully marked video as failed after error`)
     } catch (dbError) {
       console.error("[POLLING] ❌ Critical error: Failed to update status to failed:", dbError)
     }

@@ -19,5 +19,15 @@ export async function createClient() {
         }
       },
     },
+    // Add timeout configuration to prevent hanging connections
+    global: {
+      fetch: (url, options = {}) => {
+        return fetch(url, {
+          ...options,
+          // Set a reasonable timeout for database operations
+          signal: AbortSignal.timeout(30000), // 30 second timeout
+        })
+      },
+    },
   })
 }

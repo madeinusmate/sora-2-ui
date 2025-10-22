@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
+import { getProviderConfig, getCurrentProvider } from "@/lib/provider-config"
 
 export async function POST(request: Request) {
   try {
@@ -36,25 +37,24 @@ export async function POST(request: Request) {
     }
 
     const openaiJobId = videoRecord.video_id
-    console.log("[STATUS-CHECK] 🔍 Checking OpenAI job status:", openaiJobId)
+    console.log(`[STATUS-CHECK] 🔍 Checking ${getCurrentProvider().toUpperCase()} job status:`, openaiJobId)
 
-    // Check status with OpenAI API
-    const statusResponse = await fetch(`https://api.openai.com/v1/videos/${openaiJobId}`, {
+    // Check status with provider API
+    const providerConfig = getProviderConfig()
+    const statusResponse = await fetch(providerConfig.statusUrl(openaiJobId), {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
+      headers: providerConfig.headers,
     })
 
-    console.log("[STATUS-CHECK] 📊 OpenAI status response:", statusResponse.status)
+    console.log(`[STATUS-CHECK] 📊 ${getCurrentProvider().toUpperCase()} status response:`, statusResponse.status)
 
     if (!statusResponse.ok) {
-      console.error("[STATUS-CHECK] ❌ Failed to check status with OpenAI:", {
+      console.error(`[STATUS-CHECK] ❌ Failed to check status with ${getCurrentProvider().toUpperCase()}:`, {
         status: statusResponse.status,
         statusText: statusResponse.statusText
       })
       return NextResponse.json({ 
-        error: "Failed to check status with OpenAI" 
+        error: `Failed to check status with ${getCurrentProvider().toUpperCase()}` 
       }, { status: statusResponse.status })
     }
 
@@ -70,11 +70,9 @@ export async function POST(request: Request) {
       console.log("[STATUS-CHECK] ✅ Video generation completed, downloading video...")
       
       // Download video content
-      const contentResponse = await fetch(`https://api.openai.com/v1/videos/${openaiJobId}/content`, {
+      const contentResponse = await fetch(providerConfig.contentUrl(openaiJobId), {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
+        headers: providerConfig.headers,
       })
 
       if (!contentResponse.ok) {

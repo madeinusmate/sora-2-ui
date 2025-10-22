@@ -62,7 +62,12 @@ export const useVideoProgress = (videos: Video[], onVideoUpdate: (updatedVideo: 
 
     // Set up polling interval
     const interval = setInterval(() => {
-      inProgressVideos.forEach(video => {
+      // Re-filter in-progress videos on each poll to handle status changes
+      const currentInProgressVideos = videos.filter(video => 
+        video.status === "in_progress" && video.video_id
+      )
+      
+      currentInProgressVideos.forEach(video => {
         if (video.video_id) {
           fetchProgress(video.video_id, video.id)
         }
