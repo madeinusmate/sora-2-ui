@@ -12,7 +12,7 @@ import { Loader2, AlertCircle, CheckCircle2, Clock, Copy, Trash2, Shuffle, Spark
 import { useVideoProgress } from "@/hooks/use-video-progress"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo } from "react"
 interface VideoGridProps {
   videos: Video[]
   isLoading: boolean
@@ -29,14 +29,6 @@ export function VideoGrid({ videos, isLoading, onVideoUpdate, onPromptReuse, onV
   const [searchQuery, setSearchQuery] = useState<string>("")
   const [creationTypeFilter, setCreationTypeFilter] = useState<string>("all")
   const [modelFilter, setModelFilter] = useState<string>("all")
-
-  // Debug: Log when videos prop changes
-  useEffect(() => {
-    console.log("[VIDEO-GRID] 🔄 Videos prop changed:", {
-      count: videos.length,
-      statuses: videos.map(v => ({ id: v.id.substring(0, 8), status: v.status }))
-    })
-  }, [videos])
 
   // Get unique values for filter options
   const uniqueCreationTypes = useMemo(() => {

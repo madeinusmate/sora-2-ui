@@ -31,10 +31,9 @@ export const useVideoProgress = (videos: Video[], onVideoUpdate: (updatedVideo: 
 
         // If status changed to completed or failed, update the parent
         if (data.status !== "in_progress") {
-          console.log(`[PROGRESS-HOOK] 🔔 Video ${recordId} status changed to ${data.status}`)
           const updatedVideo: Video = {
             id: recordId,
-            prompt: "", // Will be filled by parent refresh
+            prompt: "", // Will be filled by parent
             video_url: data.video_url || "",
             status: data.status as "in_progress" | "completed" | "failed",
             error_message: data.error_message || undefined,
@@ -48,66 +47,74 @@ export const useVideoProgress = (videos: Video[], onVideoUpdate: (updatedVideo: 
     }
   }, [onVideoUpdate])
 
-  // Polling function that can be called immediately or on interval
-  const doPoll = useCallback(() => {
-    console.log(`[POLLING-CLIENT] 🔔 Poll triggered!`)
-    
-    const currentInProgressVideos = videos.filter(video => 
+  // Start polling for in-progress videos
+  const startPolling = useCallback(() => {
+    const inProgressVideos = videos.filter(video => 
       video.status === "in_progress" && video.video_id
     )
-    
-    console.log(`[POLLING-CLIENT] 📡 Found ${currentInProgressVideos.length} in-progress videos`)
-    
-    if (currentInProgressVideos.length === 0) {
-      console.log(`[POLLING-CLIENT] ✅ No in-progress videos`)
+
+    if (inProgressVideos.length === 0) {
+      setIsPolling(false)
       return
     }
-    
-    currentInProgressVideos.forEach(video => {
+
+    setIsPolling(true)
+    console.log(`[POLLING] 🔄 Starting polling for ${inProgressVideos.length} in-progress videos`)
+
+    // Initial fetch for all in-progress videos
+    inProgressVideos.forEach(video => {
       if (video.video_id) {
-        console.log(`[POLLING-CLIENT] 🔍 Checking video ${video.id.substring(0, 8)} (${video.video_id})`)
         fetchProgress(video.video_id, video.id)
         lastFetchTimeRef.current[video.id] = Date.now()
       }
     })
-  }, [videos, fetchProgress])
 
-  // Start polling for in-progress videos
-  const startPolling = useCallback(() => {
-    console.log(`[POLLING] 🚀 startPolling called`)
-    
-    setIsPolling(true)
+    // Set up polling interval with exponential backoff
+    let pollInterval = 5000 // Start with 5 seconds
+    const maxInterval = 30000 // Max 30 seconds
+    const backoffMultiplier = 1.5
+
+    const poll = () => {
+      const currentInProgressVideos = videos.filter(video => 
+        video.status === "in_progress" && video.video_id
+      )
+      
+      if (currentInProgressVideos.length === 0) {
+        console.log(`[POLLING] ✅ No more in-progress videos, stopping polling`)
+        setIsPolling(false)
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
+        return
+      }
+
+      console.log(`[POLLING] 📡 Polling ${currentInProgressVideos.length} videos (interval: ${pollInterval}ms)`)
+      
+      currentInProgressVideos.forEach(video => {
+        if (video.video_id) {
+          const lastFetch = lastFetchTimeRef.current[video.id] || 0
+          const timeSinceLastFetch = Date.now() - lastFetch
+          
+          // Only fetch if it's been at least 3 seconds since last fetch for this video
+          if (timeSinceLastFetch >= 3000) {
+            fetchProgress(video.video_id, video.id)
+            lastFetchTimeRef.current[video.id] = Date.now()
+          }
+        }
+      })
+
+      // Increase interval gradually (exponential backoff)
+      pollInterval = Math.min(pollInterval * backoffMultiplier, maxInterval)
+    }
 
     // Clear any existing interval
     if (intervalRef.current) {
-      console.log(`[POLLING] 🧹 Clearing existing interval ${intervalRef.current}`)
       clearInterval(intervalRef.current)
-      intervalRef.current = null
     }
 
-    // Do an immediate poll
-    console.log(`[POLLING] 🎬 Doing immediate poll...`)
-    doPoll()
-
-    // Set up polling interval - fixed at 3 seconds for consistent checking
-    const pollInterval = 3000 // Poll every 3 seconds
-    
-    console.log(`[POLLING] ⏰ Setting up interval with ${pollInterval}ms`)
-    
-    const id = setInterval(() => {
-      console.log(`[POLLING-CLIENT] ⏰ Interval callback fired! (ID: ${id})`)
-      doPoll()
-    }, pollInterval)
-    
-    intervalRef.current = id
-    
-    console.log(`[POLLING] ✅ Interval set up, ID:`, intervalRef.current)
-    
-    // Verify the interval is actually stored
-    setTimeout(() => {
-      console.log(`[POLLING] 🔍 Checking interval after 1s - still exists?`, intervalRef.current !== null)
-    }, 1000)
-  }, [doPoll])
+    intervalRef.current = setInterval(poll, pollInterval)
+  }, [videos, fetchProgress])
 
   // Stop polling
   const stopPolling = useCallback(() => {
@@ -125,33 +132,19 @@ export const useVideoProgress = (videos: Video[], onVideoUpdate: (updatedVideo: 
       video.status === "in_progress" && video.video_id
     )
 
-    console.log(`[POLLING-EFFECT] 🔄 Videos changed:`, {
-      total: videos.length,
-      inProgress: inProgressVideos.length,
-      isCurrentlyPolling: isPolling,
-      videoStatuses: videos.map(v => ({ id: v.id.substring(0, 8), status: v.status }))
-    })
-
     if (inProgressVideos.length > 0 && !isPolling) {
-      console.log(`[POLLING-EFFECT] ▶️ Starting polling for ${inProgressVideos.length} videos`)
       startPolling()
     } else if (inProgressVideos.length === 0 && isPolling) {
-      console.log(`[POLLING-EFFECT] ⏹️ Stopping polling - no in-progress videos`)
       stopPolling()
-    } else {
-      console.log(`[POLLING-EFFECT] ⏸️ No action needed`, { 
-        hasInProgress: inProgressVideos.length > 0, 
-        isPolling 
-      })
     }
 
-    // DON'T cleanup the interval here - let startPolling/stopPolling manage it
-    // Cleanup only on unmount
+    // Cleanup on unmount
     return () => {
-      console.log(`[POLLING-EFFECT] 🧹 Effect cleanup - isPolling:`, isPolling)
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videos, isPolling]) // Don't include startPolling/stopPolling to avoid re-running
+  }, [videos, isPolling, startPolling, stopPolling])
 
   const getVideoProgress = (videoId: string): ProgressData | null => {
     return progressData[videoId] || null
