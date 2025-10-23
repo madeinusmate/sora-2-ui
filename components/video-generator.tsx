@@ -200,14 +200,14 @@ export function VideoGenerator({ onVideoGenerated, externalPrompt, remixMode, on
           )}
           <div className="space-y-4">
             <div className="space-y-2">
-              
+
               <Textarea
                 id="prompt"
                 placeholder="A serene sunset over a calm ocean with gentle waves..."
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={4}
-                className="resize-none"
+                className="resize-none max-h-48 overflow-y-auto"
                 disabled={isGenerating}
               />
             </div>
@@ -220,7 +220,7 @@ export function VideoGenerator({ onVideoGenerated, externalPrompt, remixMode, on
             {!remixMode?.isActive && (
               <div className="flex flex-row flex-wrap gap-3 ">
 
-<div className="flex items-center gap-2">
+                <div className="flex items-center gap-2">
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -318,7 +318,7 @@ export function VideoGenerator({ onVideoGenerated, externalPrompt, remixMode, on
                     </SelectContent>
                   </Select>
                 </div>
-               
+
               </div>
             )}
             <Button onClick={handleGenerate} disabled={isGenerating || !prompt.trim()} className="w-full" size="lg">
