@@ -42,11 +42,34 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
 You can find these values in your Supabase project dashboard under Settings > API.
 
-### 4. Set up the database
+### 4. Set up Supabase (Database + Storage)
 
-Run the SQL scripts in the `scripts/` directory in your Supabase SQL editor to set up the required tables:
+**Quick Setup (Recommended):**
 
-1. `001_create_videos_table.sql` - Creates the main videos table
+Run the complete setup script in your Supabase SQL editor:
+
+```bash
+scripts/000_complete_setup.sql
+```
+
+This single script sets up:
+- ✅ Videos table with proper schema
+- ✅ All indexes for fast queries (10+)
+- ✅ Storage policies for secure access (4)
+- ✅ Database functions and triggers (3)
+
+**Create Storage Bucket (30 seconds)**
+
+⚠️ **Important:** Storage buckets must be created manually
+
+1. Go to **Storage** (left sidebar)
+2. Click **"New Bucket"**
+3. Name: `videos`
+4. Public bucket: ✅ **YES** (check this!)
+5. Click **"Create bucket"**
+
+
+
 
 ### 5. Run the development server
 

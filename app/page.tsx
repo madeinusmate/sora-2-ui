@@ -84,14 +84,62 @@ export default function Home() {
     setVideos((prev) => [newVideo, ...prev])
   }
 
-  const handleVideoUpdate = (updatedVideo: Video) => {
-    setVideos((prev) =>
-      prev.map((video) =>
+  const handleVideoUpdate = async (updatedVideo: Video) => {
+    console.log("[VIDEO-UPDATE] 📥 Received update:", {
+      id: updatedVideo.id,
+      status: updatedVideo.status,
+      hasVideoUrl: !!updatedVideo.video_url,
+      hasError: !!updatedVideo.error_message,
+      videoUrl: updatedVideo.video_url?.substring(0, 50) + "..."
+    })
+
+    // Update the video in state immediately with available data
+    setVideos((prev) => {
+      const updated = prev.map((video) =>
         video.id === updatedVideo.id
           ? { ...video, ...updatedVideo }
           : video
       )
-    )
+      console.log("[VIDEO-UPDATE] 📊 Updated videos in state (immediate)")
+      return updated
+    })
+
+    // Determine if we should refresh from database
+    // Refresh when video completes successfully OR fails
+    const isCompleted = updatedVideo.status === "completed" && updatedVideo.video_url
+    const isFailed = updatedVideo.status === "failed"
+    const shouldRefresh = isCompleted || isFailed
+    
+    console.log("[VIDEO-UPDATE] 🔍 Should refresh?", shouldRefresh, {
+      status: updatedVideo.status,
+      hasUrl: !!updatedVideo.video_url,
+      isCompleted,
+      isFailed
+    })
+
+    if (shouldRefresh) {
+      const action = isCompleted ? "completed" : "failed"
+      console.log(`[VIDEO-UPDATE] ${isCompleted ? '🎉' : '❌'} Video ${action}! Fetching full data from database...`)
+      
+      try {
+        const response = await fetch("/api/videos")
+        console.log("[VIDEO-UPDATE] 📡 Response status:", response.status)
+        
+        if (response.ok) {
+          const data = await response.json()
+          console.log("[VIDEO-UPDATE] 📦 Received data:", {
+            videoCount: data.videos?.length,
+            firstVideo: data.videos?.[0]?.id
+          })
+          console.log("[VIDEO-UPDATE] ✅ Refreshed videos from database")
+          setVideos(data.videos)
+        } else {
+          console.error("[VIDEO-UPDATE] ❌ Response not OK:", response.status)
+        }
+      } catch (error) {
+        console.error("[VIDEO-UPDATE] ❌ Failed to refresh videos:", error)
+      }
+    }
   }
 
   const handlePromptReuse = (prompt: string) => {

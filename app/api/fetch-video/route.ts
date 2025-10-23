@@ -1,6 +1,10 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { getProviderConfig, getCurrentProvider } from "@/lib/provider-config"
+import { uploadVideoToStorage } from "@/lib/storage-utils"
+
+// Azure endpoint constant
+const AZURE_ENDPOINT = "https://stefa-m74csuwx-eastus2.openai.azure.com/openai/v1"
 
 export async function POST(request: Request) {
   try {
@@ -39,7 +43,21 @@ export async function POST(request: Request) {
 
     const modelUsed = metadata.model || null
 
-    const contentResponse = await fetch(providerConfig.contentUrl(videoId), {
+    // Check if we have generations array (Azure API pattern)
+    const generations = metadata.generations ?? []
+    if (generations.length === 0) {
+      return NextResponse.json({ error: "No generations found in video metadata" }, { status: 400 })
+    }
+
+    const generationId = generations[0].id
+    console.log(`[FETCH-VIDEO] 📹 Found generation ID: ${generationId}`)
+    
+    // Construct the correct video content URL using generationId
+    const videoContentUrl = `${AZURE_ENDPOINT}/video/generations/${generationId}/content/video?api-version=${process.env.AZURE_API_VERSION || 'preview'}`
+    
+    console.log(`[FETCH-VIDEO] 🔗 Fetching video from: ${videoContentUrl}`)
+
+    const contentResponse = await fetch(videoContentUrl, {
       method: "GET",
       headers: providerConfig.headers,
     })
@@ -49,16 +67,18 @@ export async function POST(request: Request) {
     }
 
     const videoBlob = await contentResponse.blob()
-    const arrayBuffer = await videoBlob.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
-    const base64Video = buffer.toString("base64")
-    const videoDataUrl = `data:video/mp4;base64,${base64Video}`
+    console.log(`[FETCH-VIDEO] 📊 Video blob size: ${(videoBlob.size / 1024 / 1024).toFixed(2)} MB`)
+    
+    // Upload to Supabase Storage
+    console.log(`[FETCH-VIDEO] 📤 Uploading video to Supabase Storage...`)
+    const videoUrl = await uploadVideoToStorage(videoBlob, videoId)
+    console.log(`[FETCH-VIDEO] ✅ Video uploaded successfully:`, videoUrl)
 
     const { data: videoRecord, error: dbError } = await supabase
       .from("videos")
       .insert({
         prompt: `Manually fetched video (ID: ${videoId})`,
-        video_url: videoDataUrl,
+        video_url: videoUrl,
         video_id: videoId,
         model: modelUsed, // Store the model if available from metadata
       })

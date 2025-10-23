@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server"
 import { getProviderConfig, getCurrentProvider, formatRequestForProvider } from "@/lib/provider-config"
 import { insertVideo, updateVideoStatus } from "@/lib/database-utils"
+import { uploadVideoToStorage } from "@/lib/storage-utils"
+
+// Azure endpoint constant
+const AZURE_ENDPOINT = "https://stefa-m74csuwx-eastus2.openai.azure.com/openai/v1"
 
 export async function POST(request: Request) {
   try {
@@ -231,7 +235,37 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
 
     // Download video content
     console.log(`[DOWNLOAD] 📥 Starting video download for job: ${jobId}`)
-    const contentResponse = await fetch(providerConfig.contentUrl(jobId), {
+    
+    // Get the latest status to access generations array
+    const finalStatusResponse = await fetch(providerConfig.statusUrl(jobId), {
+      method: "GET",
+      headers: providerConfig.headers,
+    })
+    
+    if (!finalStatusResponse.ok) {
+      console.error(`[DOWNLOAD] ❌ Failed to get final status for job: ${jobId}`)
+      await updateVideoStatus(recordId, { status: "failed" })
+      return
+    }
+    
+    const finalStatusData = await finalStatusResponse.json()
+    const generations = finalStatusData.generations ?? []
+    
+    if (generations.length === 0) {
+      console.error(`[DOWNLOAD] ❌ No generations found for job: ${jobId}`)
+      await updateVideoStatus(recordId, { status: "failed" })
+      return
+    }
+    
+    const generationId = generations[0].id
+    console.log(`[DOWNLOAD] 📹 Found generation ID: ${generationId}`)
+    
+    // Construct the correct video content URL using generationId
+    const videoContentUrl = `${AZURE_ENDPOINT}/video/generations/${generationId}/content/video?api-version=${process.env.AZURE_API_VERSION || 'preview'}`
+    
+    console.log(`[DOWNLOAD] 🔗 Fetching video from: ${videoContentUrl}`)
+    
+    const contentResponse = await fetch(videoContentUrl, {
       method: "GET",
       headers: providerConfig.headers,
     })
@@ -259,24 +293,26 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
     const blobSize = videoBlob.size
     console.log(`[DOWNLOAD] 📊 Video blob size: ${(blobSize / 1024 / 1024).toFixed(2)} MB`)
     
-    const arrayBuffer = await videoBlob.arrayBuffer()
-    console.log(`[DOWNLOAD] 🔄 Converting to base64...`)
-    const buffer = Buffer.from(arrayBuffer)
-    const base64Video = buffer.toString("base64")
-    const videoDataUrl = `data:video/mp4;base64,${base64Video}`
-    
-    console.log(`[DOWNLOAD] ✅ Video processing completed. Base64 length: ${base64Video.length} characters`)
-
-    // Update database with completed video
-    console.log(`[DOWNLOAD] 💾 Updating database with completed video for record: ${recordId}`)
+    // Upload to Supabase Storage instead of converting to base64
+    console.log(`[DOWNLOAD] 📤 Uploading video to Supabase Storage...`)
     try {
+      const videoUrl = await uploadVideoToStorage(videoBlob, jobId)
+      console.log(`[DOWNLOAD] ✅ Video uploaded successfully:`, videoUrl)
+
+      // Update database with completed video URL
+      console.log(`[DOWNLOAD] 💾 Updating database with completed video for record: ${recordId}`)
       await updateVideoStatus(recordId, { 
-        video_url: videoDataUrl, 
+        video_url: videoUrl, 
         status: "completed" 
       })
       console.log(`[DOWNLOAD] 🎉 Successfully updated database - video is now ready! Record: ${recordId}, Job: ${jobId}`)
-    } catch (finalUpdateError) {
-      console.error(`[DOWNLOAD] ❌ Failed to update database with completed video:`, finalUpdateError)
+    } catch (uploadError) {
+      console.error(`[DOWNLOAD] ❌ Failed to upload video to storage:`, uploadError)
+      // Update status to failed if upload fails
+      await updateVideoStatus(recordId, { 
+        status: "failed",
+        error_message: `Failed to upload video: ${uploadError instanceof Error ? uploadError.message : 'Unknown error'}`
+      })
     }
   } catch (error) {
     console.error("[POLLING] ❌ Unexpected error in background polling:", {

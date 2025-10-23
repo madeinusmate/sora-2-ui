@@ -1,6 +1,11 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { getProviderConfig, getCurrentProvider, formatRequestForProvider } from "@/lib/provider-config"
+import { updateVideoStatus } from "@/lib/database-utils"
+import { uploadVideoToStorage } from "@/lib/storage-utils"
+
+// Azure endpoint constant
+const AZURE_ENDPOINT = "https://stefa-m74csuwx-eastus2.openai.azure.com/openai/v1"
 
 export async function POST(request: Request) {
   try {
@@ -172,19 +177,14 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
         
         // Update status to failed with error message
         console.log(`[REMIX-POLLING] 💾 Updating database status to 'failed' with error message for record: ${recordId}`)
-        const supabase = await createClient()
-        const { error: updateError } = await supabase
-          .from("videos")
-          .update({ 
+        try {
+          await updateVideoStatus(recordId, { 
             status: "failed",
             error_message: errorMessage
           })
-          .eq("id", recordId)
-        
-        if (updateError) {
-          console.error(`[REMIX-POLLING] ❌ Failed to update database status to 'failed':`, updateError)
-        } else {
           console.log(`[REMIX-POLLING] ✅ Successfully updated database status to 'failed' with error: ${errorMessage}`)
+        } catch (updateError) {
+          console.error(`[REMIX-POLLING] ❌ Failed to update database status to 'failed':`, updateError)
         }
         return
       }
@@ -197,23 +197,48 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
       
       // Timeout - mark as failed
       console.log(`[REMIX-POLLING] 💾 Updating database status to 'failed' due to timeout for record: ${recordId}`)
-      const supabase = await createClient()
-      const { error: timeoutError } = await supabase
-        .from("videos")
-        .update({ status: "failed" })
-        .eq("id", recordId)
-      
-      if (timeoutError) {
-        console.error(`[REMIX-POLLING] ❌ Failed to update database status after timeout:`, timeoutError)
-      } else {
+      try {
+        await updateVideoStatus(recordId, { status: "failed" })
         console.log(`[REMIX-POLLING] ✅ Successfully updated database status to 'failed' after timeout`)
+      } catch (timeoutError) {
+        console.error(`[REMIX-POLLING] ❌ Failed to update database status after timeout:`, timeoutError)
       }
       return
     }
 
     // Download video content
     console.log(`[REMIX-DOWNLOAD] 📥 Starting video download for remix job: ${jobId}`)
-    const contentResponse = await fetch(providerConfig.contentUrl(jobId), {
+    
+    // Get the latest status to access generations array
+    const finalStatusResponse = await fetch(providerConfig.statusUrl(jobId), {
+      method: "GET",
+      headers: providerConfig.headers,
+    })
+    
+    if (!finalStatusResponse.ok) {
+      console.error(`[REMIX-DOWNLOAD] ❌ Failed to get final status for remix job: ${jobId}`)
+      await updateVideoStatus(recordId, { status: "failed" })
+      return
+    }
+    
+    const finalStatusData = await finalStatusResponse.json()
+    const generations = finalStatusData.generations ?? []
+    
+    if (generations.length === 0) {
+      console.error(`[REMIX-DOWNLOAD] ❌ No generations found for remix job: ${jobId}`)
+      await updateVideoStatus(recordId, { status: "failed" })
+      return
+    }
+    
+    const generationId = generations[0].id
+    console.log(`[REMIX-DOWNLOAD] 📹 Found generation ID: ${generationId}`)
+    
+    // Construct the correct video content URL using generationId
+    const videoContentUrl = `${AZURE_ENDPOINT}/video/generations/${generationId}/content/video?api-version=${process.env.AZURE_API_VERSION || 'preview'}`
+    
+    console.log(`[REMIX-DOWNLOAD] 🔗 Fetching video from: ${videoContentUrl}`)
+    
+    const contentResponse = await fetch(videoContentUrl, {
       method: "GET",
       headers: providerConfig.headers,
     })
@@ -227,16 +252,11 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
       })
       
       console.log(`[REMIX-DOWNLOAD] 💾 Updating database status to 'failed' due to download failure for record: ${recordId}`)
-      const supabase = await createClient()
-      const { error: downloadError } = await supabase
-        .from("videos")
-        .update({ status: "failed" })
-        .eq("id", recordId)
-      
-      if (downloadError) {
-        console.error(`[REMIX-DOWNLOAD] ❌ Failed to update database status after download failure:`, downloadError)
-      } else {
+      try {
+        await updateVideoStatus(recordId, { status: "failed" })
         console.log(`[REMIX-DOWNLOAD] ✅ Successfully updated database status to 'failed' after download failure`)
+      } catch (downloadError) {
+        console.error(`[REMIX-DOWNLOAD] ❌ Failed to update database status after download failure:`, downloadError)
       }
       return
     }
@@ -246,29 +266,26 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
     const blobSize = videoBlob.size
     console.log(`[REMIX-DOWNLOAD] 📊 Remix video blob size: ${(blobSize / 1024 / 1024).toFixed(2)} MB`)
     
-    const arrayBuffer = await videoBlob.arrayBuffer()
-    console.log(`[REMIX-DOWNLOAD] 🔄 Converting to base64...`)
-    const buffer = Buffer.from(arrayBuffer)
-    const base64Video = buffer.toString("base64")
-    const videoDataUrl = `data:video/mp4;base64,${base64Video}`
-    
-    console.log(`[REMIX-DOWNLOAD] ✅ Remix video processing completed. Base64 length: ${base64Video.length} characters`)
+    // Upload to Supabase Storage instead of converting to base64
+    console.log(`[REMIX-DOWNLOAD] 📤 Uploading remix video to Supabase Storage...`)
+    try {
+      const videoUrl = await uploadVideoToStorage(videoBlob, jobId)
+      console.log(`[REMIX-DOWNLOAD] ✅ Remix video uploaded successfully:`, videoUrl)
 
-    // Update database with completed video
-    console.log(`[REMIX-DOWNLOAD] 💾 Updating database with completed remix video for record: ${recordId}`)
-    const supabase = await createClient()
-    const { error: finalUpdateError } = await supabase
-      .from("videos")
-      .update({ 
-        video_url: videoDataUrl, 
+      // Update database with completed video URL
+      console.log(`[REMIX-DOWNLOAD] 💾 Updating database with completed remix video for record: ${recordId}`)
+      await updateVideoStatus(recordId, { 
+        video_url: videoUrl, 
         status: "completed" 
       })
-      .eq("id", recordId)
-    
-    if (finalUpdateError) {
-      console.error(`[REMIX-DOWNLOAD] ❌ Failed to update database with completed remix video:`, finalUpdateError)
-    } else {
       console.log(`[REMIX-DOWNLOAD] 🎉 Successfully updated database - remix video is now ready! Record: ${recordId}, Job: ${jobId}`)
+    } catch (uploadError) {
+      console.error(`[REMIX-DOWNLOAD] ❌ Failed to upload remix video to storage:`, uploadError)
+      // Update status to failed if upload fails
+      await updateVideoStatus(recordId, { 
+        status: "failed",
+        error_message: `Failed to upload video: ${uploadError instanceof Error ? uploadError.message : 'Unknown error'}`
+      })
     }
   } catch (error) {
     console.error("[REMIX-POLLING] ❌ Unexpected error in remix background polling:", {
@@ -281,17 +298,8 @@ async function pollAndUpdateVideo(jobId: string, recordId: string, model: string
     // Mark as failed on error
     console.log(`[REMIX-POLLING] 💾 Attempting to mark remix video as failed due to unexpected error...`)
     try {
-      const supabase = await createClient()
-      const { error: errorUpdateError } = await supabase
-        .from("videos")
-        .update({ status: "failed" })
-        .eq("id", recordId)
-      
-      if (errorUpdateError) {
-        console.error(`[REMIX-POLLING] ❌ Failed to update status to failed after error:`, errorUpdateError)
-      } else {
-        console.log(`[REMIX-POLLING] ✅ Successfully marked remix video as failed after error`)
-      }
+      await updateVideoStatus(recordId, { status: "failed" })
+      console.log(`[REMIX-POLLING] ✅ Successfully marked remix video as failed after error`)
     } catch (dbError) {
       console.error("[REMIX-POLLING] ❌ Critical error: Failed to update status to failed:", dbError)
     }

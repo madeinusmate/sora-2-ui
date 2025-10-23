@@ -1,6 +1,10 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { getProviderConfig, getCurrentProvider } from "@/lib/provider-config"
+import { uploadVideoToStorage } from "@/lib/storage-utils"
+
+// Azure endpoint constant
+const AZURE_ENDPOINT = "https://stefa-m74csuwx-eastus2.openai.azure.com/openai/v1"
 
 export async function POST(request: Request) {
   try {
@@ -69,8 +73,25 @@ export async function POST(request: Request) {
     if (statusData.status === "succeeded" || statusData.status === "completed") {
       console.log("[STATUS-CHECK] ✅ Video generation completed, downloading video...")
       
+      // Check if we have generations array (Azure API pattern)
+      const generations = statusData.generations ?? []
+      if (generations.length === 0) {
+        console.error("[STATUS-CHECK] ❌ No generations found in response")
+        return NextResponse.json({ 
+          error: "No generations found in video response" 
+        }, { status: 400 })
+      }
+      
+      const generationId = generations[0].id
+      console.log(`[STATUS-CHECK] 📹 Found generation ID: ${generationId}`)
+      
+      // Construct the correct video content URL using generationId
+      const videoContentUrl = `${AZURE_ENDPOINT}/video/generations/${generationId}/content/video?api-version=${process.env.AZURE_API_VERSION || 'preview'}`
+      
+      console.log(`[STATUS-CHECK] 🔗 Fetching video from: ${videoContentUrl}`)
+      
       // Download video content
-      const contentResponse = await fetch(providerConfig.contentUrl(openaiJobId), {
+      const contentResponse = await fetch(videoContentUrl, {
         method: "GET",
         headers: providerConfig.headers,
       })
@@ -88,18 +109,18 @@ export async function POST(request: Request) {
       // Process video content
       console.log("[STATUS-CHECK] 🔄 Processing video content...")
       const videoBlob = await contentResponse.blob()
-      const arrayBuffer = await videoBlob.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-      const base64Video = buffer.toString("base64")
-      const videoDataUrl = `data:video/mp4;base64,${base64Video}`
+      console.log("[STATUS-CHECK] 📊 Video blob size:", `${(videoBlob.size / 1024 / 1024).toFixed(2)} MB`)
       
-      console.log("[STATUS-CHECK] ✅ Video processing completed")
+      // Upload to Supabase Storage
+      console.log("[STATUS-CHECK] 📤 Uploading video to Supabase Storage...")
+      const videoUrl = await uploadVideoToStorage(videoBlob, openaiJobId)
+      console.log("[STATUS-CHECK] ✅ Video uploaded successfully:", videoUrl)
 
       // Update database with completed video
       const { error: updateError } = await supabase
         .from("videos")
         .update({ 
-          video_url: videoDataUrl, 
+          video_url: videoUrl, 
           status: "completed" 
         })
         .eq("id", videoId)

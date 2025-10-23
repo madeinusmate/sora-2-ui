@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server"
 import { getProviderConfig, getCurrentProvider } from "@/lib/provider-config"
 import { fetchVideoByVideoId, updateVideoStatus } from "@/lib/database-utils"
+import { uploadVideoToStorage } from "@/lib/storage-utils"
+
+// Azure endpoint constant
+const AZURE_ENDPOINT = "https://stefa-m74csuwx-eastus2.openai.azure.com/openai/v1"
 
 export async function GET(request: Request) {
   try {
@@ -43,37 +47,56 @@ export async function GET(request: Request) {
             console.log(`[PROGRESS] 🎉 Video completed! Updating database status...`)
             
             try {
-              // Fetch the video content
-              const contentResponse = await fetch(providerConfig.contentUrl(videoId), {
-                method: "GET",
-                headers: providerConfig.headers,
-              })
-
-              if (contentResponse.ok) {
-                const videoBlob = await contentResponse.blob()
-                const arrayBuffer = await videoBlob.arrayBuffer()
-                const buffer = Buffer.from(arrayBuffer)
-                const base64Video = buffer.toString("base64")
-                const videoDataUrl = `data:video/mp4;base64,${base64Video}`
-
-                // Update the database with completed status and video URL
-                await updateVideoStatus(video.id, {
-                  status: "completed",
-                  video_url: videoDataUrl
+              // Check if we have generations array (Azure API pattern)
+              const generations = statusData.generations ?? []
+              if (generations.length > 0) {
+                const generationId = generations[0].id
+                console.log(`[PROGRESS] 📹 Found generation ID: ${generationId}`)
+                
+                // Construct the correct video content URL using generationId
+                const videoContentUrl = `${AZURE_ENDPOINT}/video/generations/${generationId}/content/video?api-version=${process.env.AZURE_API_VERSION || 'preview'}`
+                
+                console.log(`[PROGRESS] 🔗 Fetching video from: ${videoContentUrl}`)
+                
+                const contentResponse = await fetch(videoContentUrl, {
+                  method: "GET",
+                  headers: providerConfig.headers,
                 })
 
-                console.log(`[PROGRESS] ✅ Database updated successfully for video ${videoId}`)
+               if (contentResponse.ok) {
+                 const videoBlob = await contentResponse.blob()
+                 console.log(`[PROGRESS] 📊 Video blob size: ${(videoBlob.size / 1024 / 1024).toFixed(2)} MB`)
+                 
+                 // Upload to Supabase Storage
+                 console.log(`[PROGRESS] 📤 Uploading video to Supabase Storage...`)
+                 const videoUrl = await uploadVideoToStorage(videoBlob, videoId)
+                 console.log(`[PROGRESS] ✅ Video uploaded successfully:`, videoUrl)
 
-                return NextResponse.json({
-                  status: "completed",
-                  progress: 100,
-                  error_message: null,
-                  video_url: videoDataUrl,
-                  provider_status: statusData.status,
-                  updated_at: new Date().toISOString()
-                })
+                 // Update the database with completed status and video URL
+                 await updateVideoStatus(video.id, {
+                   status: "completed",
+                   video_url: videoUrl
+                 })
+
+                  console.log(`[PROGRESS] ✅ Database updated successfully for video ${videoId}`)
+
+                  return NextResponse.json({
+                    status: "completed",
+                    progress: 100,
+                    error_message: null,
+                    video_url: videoUrl,
+                    provider_status: statusData.status,
+                    updated_at: new Date().toISOString()
+                  })
+                } else {
+                  console.error(`[PROGRESS] ❌ Failed to fetch video content: ${contentResponse.status}`)
+                  // Update status to completed but without video URL
+                  await updateVideoStatus(video.id, {
+                    status: "completed"
+                  })
+                }
               } else {
-                console.error(`[PROGRESS] ❌ Failed to fetch video content: ${contentResponse.status}`)
+                console.warn(`[PROGRESS] ⚠️ No generations found in response for video ${videoId}`)
                 // Update status to completed but without video URL
                 await updateVideoStatus(video.id, {
                   status: "completed"

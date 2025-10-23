@@ -12,7 +12,7 @@ import { Loader2, AlertCircle, CheckCircle2, Clock, Copy, Trash2, Shuffle, Spark
 import { useVideoProgress } from "@/hooks/use-video-progress"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 interface VideoGridProps {
   videos: Video[]
   isLoading: boolean
@@ -23,12 +23,20 @@ interface VideoGridProps {
 }
 
 export function VideoGrid({ videos, isLoading, onVideoUpdate, onPromptReuse, onVideoDelete, onVideoRemix }: VideoGridProps) {
-  const { getVideoProgress } = useVideoProgress(videos, onVideoUpdate)
+  const { getVideoProgress, isPolling, startPolling, stopPolling, manualRefresh } = useVideoProgress(videos, onVideoUpdate)
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null)
   const [checkingStatusVideoId, setCheckingStatusVideoId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState<string>("")
   const [creationTypeFilter, setCreationTypeFilter] = useState<string>("all")
   const [modelFilter, setModelFilter] = useState<string>("all")
+
+  // Debug: Log when videos prop changes
+  useEffect(() => {
+    console.log("[VIDEO-GRID] 🔄 Videos prop changed:", {
+      count: videos.length,
+      statuses: videos.map(v => ({ id: v.id.substring(0, 8), status: v.status }))
+    })
+  }, [videos])
 
   // Get unique values for filter options
   const uniqueCreationTypes = useMemo(() => {
@@ -295,6 +303,40 @@ export function VideoGrid({ videos, isLoading, onVideoUpdate, onPromptReuse, onV
             </SelectContent>
           </Select>
 
+          {/* Polling Controls */}
+          <div className="flex items-center gap-2">
+            {/* {isPolling ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={stopPolling}
+                className="flex items-center gap-2"
+              >
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                Stop Polling
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={startPolling}
+                className="flex items-center gap-2"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Start Polling
+              </Button>
+            )} */}
+            
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={manualRefresh}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh Now
+            </Button>
+          </div>
           
         </div>
 
@@ -319,6 +361,12 @@ export function VideoGrid({ videos, isLoading, onVideoUpdate, onPromptReuse, onV
                       <div className="flex items-center gap-2">
                         <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
                         <div className="text-sm font-medium text-blue-700">Generating Video</div>
+                        {isPolling && (
+                          <div className="flex items-center gap-1">
+                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                            <span className="text-xs text-green-600">Live</span>
+                          </div>
+                        )}
                       </div>
 
                       {progressPercentage !== null && (
